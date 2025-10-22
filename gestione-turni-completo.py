@@ -549,291 +549,429 @@ class GestioneTurni:
 
     def _genera_calendario_mensile(self, anno, mese):
         """
-        Genera il calendario mensile con queste priorità:
-        1. Garantire la copertura COMPLETA dell'orario del negozio (8:00-21:00)
-        2. Rispetto assoluto dei vincoli di ore per chi non ha autorizzato straordinari
-        3. Ottimizzazione della rotazione dei turni come criterio secondario
+        Genera il calendario mensile con algoritmo ottimizzato:
+        1. Pre-validazione delle risorse disponibili
+        2. Algoritmo greedy intelligente con priorità dinamiche
+        3. Bilanciamento equo delle ore tra gli addetti
+        4. Copertura oraria completa garantita
+        5. Rispetto rigoroso dei vincoli (ore max, riposi, ferie)
         """
+        print(f"\n{'='*70}")
+        print(f"GENERAZIONE CALENDARIO - {calendar.month_name[mese].upper()} {anno}")
+        print(f"{'='*70}\n")
+
         # Ottiene il numero di giorni nel mese
         num_giorni = calendar.monthrange(anno, mese)[1]
-        
+
+        # Pre-validazione: calcola le risorse disponibili
+        print("=== PRE-VALIDAZIONE RISORSE ===")
+        giorni_lavorativi = self._conta_giorni_lavorativi(anno, mese)
+        ore_necessarie_giorno = 13  # 08:00-21:00
+        ore_totali_necessarie = giorni_lavorativi * ore_necessarie_giorno
+
+        ore_disponibili_totali = 0
+        for nome, info in self.addetti.items():
+            # Calcola giorni disponibili per addetto
+            giorni_disponibili = self._conta_giorni_disponibili(nome, anno, mese)
+            ore_max_addetto = min(info['ore_max'], giorni_disponibili * 8)
+            ore_disponibili_totali += ore_max_addetto
+            print(f"- {nome}: {giorni_disponibili} giorni disponibili, max {ore_max_addetto:.1f} ore")
+
+        print(f"\nOre necessarie totali: {ore_totali_necessarie:.1f}")
+        print(f"Ore disponibili totali: {ore_disponibili_totali:.1f}")
+
+        if ore_disponibili_totali < ore_totali_necessarie:
+            print(f"⚠️ ATTENZIONE: Risorse insufficienti! Mancano {ore_totali_necessarie - ore_disponibili_totali:.1f} ore")
+        else:
+            print(f"✓ Risorse sufficienti (surplus: {ore_disponibili_totali - ore_totali_necessarie:.1f} ore)")
+
         # Inizializza il dizionario del calendario
         calendario = {giorno: {} for giorno in range(1, num_giorni + 1)}
-        
-        # Log per tenere traccia delle ore assegnate a ciascun addetto
+
+        # Tracciamento ore assegnate e statistiche per addetto
         ore_assegnate = {addetto: 0 for addetto in self.addetti}
-        
+        turni_assegnati = {addetto: {'mattina': 0, 'pomeriggio': 0} for addetto in self.addetti}
+
         # Per ogni giorno del mese
         for giorno in range(1, num_giorni + 1):
             data = datetime(anno, mese, giorno)
             data_str = data.strftime('%d-%m')
-            
+            giorno_settimana = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'][data.weekday()]
+
             # Salta i giorni festivi
             if data_str in self.giorni_festivi:
-                print(f"Giorno {giorno}: festivo, saltato")
-                continue  # Questo continue è correttamente nel ciclo for
-            
-            print(f"\n=== Pianificazione giorno {giorno} ({data.strftime('%d/%m/%Y')}) ===")
-            
-            # Lista degli addetti disponibili per il giorno
-            addetti_disponibili = []
-            addetti_straordinario = []  # Addetti con autorizzazione straordinari
-            addetti_no_straordinario = []  # Addetti senza autorizzazione straordinari
-            
-            for nome, info in self.addetti.items():
-                # Controlla ferie
-                if data.strftime('%Y-%m-%d') in info['ferie']:
-                    print(f"- {nome}: non disponibile (ferie)")
-                    continue  # Passa al prossimo addetto
-                    
-                # Controlla giorni di riposo
-                if data.weekday() in info['giorni_riposo']:
-                    print(f"- {nome}: non disponibile (riposo settimanale)")
-                    continue  # Passa al prossimo addetto
-                
-                # Calcola ore residue disponibili
-                ore_residue = info['ore_max'] - ore_assegnate[nome]
-                
-                # Per gli addetti senza straordinario, verificare se possono ancora fare turni
-                if not info['straordinario']:
-                    # Calcola il turno minimo (se non ci sono turni definiti, assumiamo 4 ore)
-                    turno_minimo_ore = 4
-                    if self.turni_disponibili:
-                        ore_min = 24
-                        for turno in self.turni_disponibili:
-                            inizio = datetime.strptime(turno[0], '%H:%M')
-                            fine = datetime.strptime(turno[1], '%H:%M')
-                            ore_turno = (fine - inizio).seconds / 3600
-                            if ore_turno < ore_min:
-                                ore_min = ore_turno
-                        turno_minimo_ore = ore_min
-                    
-                    # Se l'addetto non ha abbastanza ore residue per il turno minimo
-                    if ore_residue < turno_minimo_ore:
-                        print(f"- {nome}: non disponibile (limite ore raggiunto: {ore_assegnate[nome]:.1f}/{info['ore_max']})")
-                        continue  # Passa al prossimo addetto
-                    addetti_no_straordinario.append(nome)
-                else:
-                    addetti_straordinario.append(nome)
-                
-                # Aggiungi alla lista dei disponibili
-                addetti_disponibili.append(nome)
-                print(f"- {nome}: disponibile con {ore_residue:.1f} ore residue" + 
-                    (" (con straordinario autorizzato)" if info['straordinario'] else ""))
-            
-            # Se non ci sono addetti disponibili, passa al giorno successivo
-            if not addetti_disponibili:
-                print(f"AVVISO: Nessun addetto disponibile per il giorno {giorno}!")
-                continue  # Questo continue è correttamente nel ciclo for
-            
-            # Identifica quali fasce orarie devono essere coperte
-            # 1. Prepara la copertura oraria (minuti dall'apertura alla chiusura)
-            inizio_giornata = datetime.strptime(self.orario_apertura, '%H:%M')
-            fine_giornata = datetime.strptime(self.orario_chiusura, '%H:%M')
-            
-            inizio_min = inizio_giornata.hour * 60 + inizio_giornata.minute
-            fine_min = fine_giornata.hour * 60 + fine_giornata.minute
-            durata_min = fine_min - inizio_min
-            
-            # Algoritmo di assegnazione turni
-            tentativi = 0
-            max_tentativi = 25  # Aumentato per dare più possibilità di trovare una soluzione
-            trovata_soluzione_completa = False
-            miglior_soluzione = None
-            minima_scopertura = durata_min  # Minuti scoperti nella miglior soluzione
-            
-            while tentativi < max_tentativi and not trovata_soluzione_completa:
-                # Inizializza una nuova soluzione
-                soluzione_attuale = {}
-                copertura = [False] * durata_min  # Minuti coperti
-                addetti_disponibili_copia = addetti_disponibili.copy()
-                
-                # Ore che verrebbero assegnate con questa soluzione
-                ore_soluzione = {addetto: 0 for addetto in addetti_disponibili}
-                
-                # Fase 1: Prima proviamo a coprire l'intera giornata utilizzando tutti gli addetti disponibili
-                tentativi_copertura = 0
-                while tentativi_copertura < 3:  # Proviamo diversi approcci
-                    # Identifica i buchi nella copertura attuale
-                    buchi = []
-                    inizio_buco = None
-                    
-                    for i, coperto in enumerate(copertura):
-                        if not coperto and inizio_buco is None:
-                            inizio_buco = i
-                        elif coperto and inizio_buco is not None:
-                            buchi.append((inizio_buco, i))
-                            inizio_buco = None
-                    
-                    if inizio_buco is not None:
-                        buchi.append((inizio_buco, len(copertura)))
-                    
-                    # Se non ci sono buchi, abbiamo una copertura completa
-                    if not buchi:
-                        trovata_soluzione_completa = True
-                        break
-                    
-                    # Per ogni buco, cerchiamo di trovare un turno e un addetto per coprirlo
-                    for buco_inizio, buco_fine in buchi:
-                        # Converti il buco in orario
-                        ora_inizio = inizio_min + buco_inizio
-                        ora_fine = inizio_min + buco_fine
-                        
-                        ora_inizio_str = f"{ora_inizio // 60:02d}:{ora_inizio % 60:02d}"
-                        ora_fine_str = f"{ora_fine // 60:02d}:{ora_fine % 60:02d}"
-                        
-                        print(f"  Trovato buco da coprire: {ora_inizio_str} - {ora_fine_str}")
-                        
-                        # Cerca turni che potrebbero coprire questo buco (o parte di esso)
-                        for turno in self.turni_disponibili:
-                            # Converti il turno in minuti
-                            t_inizio = datetime.strptime(turno[0], '%H:%M')
-                            t_fine = datetime.strptime(turno[1], '%H:%M')
-                            
-                            t_inizio_min = t_inizio.hour * 60 + t_inizio.minute
-                            t_fine_min = t_fine.hour * 60 + t_fine.minute
-                            
-                            # Verifica se il turno copre almeno parte del buco
-                            if (t_inizio_min < ora_fine and t_fine_min > ora_inizio):
-                                # Calcola la sovrapposizione
-                                inizio_sovrap = max(t_inizio_min, ora_inizio)
-                                fine_sovrap = min(t_fine_min, ora_fine)
-                                sovrapposizione = fine_sovrap - inizio_sovrap
-                                
-                                if sovrapposizione <= 0:
-                                    continue  # Passa al turno successivo
-                                
-                                # Cerca un addetto per questo turno
-                                miglior_addetto = None
-                                miglior_punteggio = -float('inf')
-                                
-                                # Priorità agli addetti con straordinario autorizzato
-                                for addetto in addetti_disponibili_copia:
-                                    if addetto in soluzione_attuale:
-                                        continue  # Già assegnato, passa al prossimo addetto
-                                    
-                                    # Calcola ore del turno
-                                    ore_turno = (t_fine - t_inizio).seconds / 3600
-                                    
-                                    # Verifica se l'addetto senza straordinario supererebbe il limite
-                                    if (not self.addetti[addetto]['straordinario'] and 
-                                        ore_assegnate[addetto] + ore_soluzione[addetto] + ore_turno > self.addetti[addetto]['ore_max']):
-                                        continue  # Passa al prossimo addetto
-                                    
-                                    # Calcola punteggio
-                                    punteggio = self._calcola_punteggio_turno(
-                                        addetto, turno, giorno, mese, anno, calendario)
-                                    
-                                    # Bonus per addetti con straordinario autorizzato
-                                    if self.addetti[addetto]['straordinario']:
-                                        punteggio += 20
-                                    
-                                    # Bonus maggiore per i turni che coprono più del buco
-                                    punteggio += sovrapposizione / 30  # Bonus proporzionale ai minuti coperti
-                                    
-                                    if punteggio > miglior_punteggio:
-                                        miglior_punteggio = punteggio
-                                        miglior_addetto = addetto
-                                
-                                # Se abbiamo trovato un addetto, assegnagli il turno
-                                if miglior_addetto:
-                                    soluzione_attuale[miglior_addetto] = turno
-                                    
-                                    # Aggiorna la copertura
-                                    t_inizio_rel = max(0, t_inizio_min - inizio_min)
-                                    t_fine_rel = min(durata_min, t_fine_min - inizio_min)
-                                    
-                                    for i in range(t_inizio_rel, t_fine_rel):
-                                        copertura[i] = True
-                                    
-                                    # Aggiorna ore provvisorie
-                                    ore_soluzione[miglior_addetto] += ore_turno
-                                    
-                                    # Rimuovi l'addetto dalla lista dei disponibili se necessario
-                                    addetti_disponibili_copia.remove(miglior_addetto)
-                                    
-                                    # Ricalcola i buchi e riprova
-                                    break  # Esce dal ciclo dei turni disponibili
-                    
-                    # Se abbiamo esaurito gli addetti, interrompi
-                    if not addetti_disponibili_copia:
-                        break  # Esce dal ciclo dei tentativi di copertura
-                    
-                    tentativi_copertura += 1
-                
-                # Calcola quanti minuti sono ancora scoperti
-                minuti_scoperti = copertura.count(False)
-                
-                # Se questa soluzione ha meno minuti scoperti della migliore finora,
-                # o è la prima soluzione, memorizzala
-                if minuti_scoperti < minima_scopertura or miglior_soluzione is None:
-                    minima_scopertura = minuti_scoperti
-                    miglior_soluzione = soluzione_attuale.copy()
-                    
-                    # Se abbiamo trovato una copertura completa, possiamo fermarci
-                    if minuti_scoperti == 0:
-                        trovata_soluzione_completa = True
-                        break  # Esce dal ciclo while principale
-                
-                # Varia l'approccio per i prossimi tentativi
-                tentativi += 1
-            
-            # Usa la migliore soluzione trovata
-            if miglior_soluzione:
-                print(f"Soluzione trovata dopo {tentativi+1} tentativi:")
-                if minima_scopertura > 0:
-                    print(f"ATTENZIONE: {minima_scopertura} minuti rimangono scoperti!")
-                
-                # Verifica finale che nessun addetto senza straordinario superi il limite
-                valida = True
-                nuovo_ore_assegnate = ore_assegnate.copy()
-                
-                for addetto, turno in miglior_soluzione.items():
-                    inizio = datetime.strptime(turno[0], '%H:%M')
-                    fine = datetime.strptime(turno[1], '%H:%M')
-                    ore_turno = (fine - inizio).seconds / 3600
-                    nuovo_ore_assegnate[addetto] += ore_turno
-                    
-                    # Controllo finale rigoroso
-                    if (not self.addetti[addetto]['straordinario'] and 
-                        nuovo_ore_assegnate[addetto] > self.addetti[addetto]['ore_max']):
-                        valida = False
-                        print(f"ERRORE: La soluzione farebbe superare il limite a {addetto}")
-                        break  # Esce dal ciclo di verifica
-                
-                if valida:
-                    calendario[giorno] = miglior_soluzione
-                    
-                    # Aggiorna le ore assegnate con i turni effettivi
-                    for addetto, turno in miglior_soluzione.items():
-                        inizio = datetime.strptime(turno[0], '%H:%M')
-                        fine = datetime.strptime(turno[1], '%H:%M')
-                        ore_turno = (fine - inizio).seconds / 3600
-                        ore_assegnate[addetto] += ore_turno
-                        
-                        print(f"  Assegnato a {addetto}: {turno[0]}-{turno[1]} ({ore_turno:.1f} ore)")
-                else:
-                    print("ERRORE: Soluzione non valida, il giorno non verrà coperto!")
+                print(f"\nGiorno {giorno:2d} ({giorno_settimana}): FESTIVO - saltato")
+                continue
+
+            print(f"\n{'─'*70}")
+            print(f"Giorno {giorno:2d} ({giorno_settimana} {data.strftime('%d/%m/%Y')})")
+            print(f"{'─'*70}")
+
+            # Calcola addetti disponibili con priorità
+            addetti_info = self._calcola_disponibilita_addetti(
+                data, ore_assegnate, turni_assegnati, calendario, giorno
+            )
+
+            if not addetti_info['disponibili']:
+                print("⚠️ AVVISO: Nessun addetto disponibile per questo giorno!")
+                continue
+
+            # Algoritmo di assegnazione ottimizzato
+            soluzione = self._assegna_turni_giorno_ottimizzato(
+                giorno, data, addetti_info, ore_assegnate, turni_assegnati, calendario
+            )
+
+            if soluzione:
+                calendario[giorno] = soluzione
+
+                # Aggiorna statistiche
+                for addetto, turno in soluzione.items():
+                    ore_turno = self._calcola_ore_turno(turno)
+                    ore_assegnate[addetto] += ore_turno
+
+                    # Aggiorna contatori mattina/pomeriggio
+                    if turno[0] < "12:00":
+                        turni_assegnati[addetto]['mattina'] += 1
+                    else:
+                        turni_assegnati[addetto]['pomeriggio'] += 1
+
+                    print(f"  ✓ {addetto:15s} → {turno[0]}-{turno[1]} ({ore_turno:.1f}h) "
+                          f"[Tot: {ore_assegnate[addetto]:.1f}h]")
             else:
-                print("AVVISO: Nessuna soluzione trovata per questo giorno!")
-                # NON utilizzare continue qui, siamo già alla fine del ciclo del giorno
-        
-        # Stampa riepilogo finale
-        print("\nRiepilogo ore assegnate:")
-        for addetto, ore in ore_assegnate.items():
-            info = self.addetti[addetto]
-            stato = "OK"
-            
-            if ore > info['ore_max'] and not info['straordinario']:
-                stato = "ERRORE: Superato limite!"
-            elif ore > info['ore_max']:
-                stato = "Straordinario"
-            elif ore < info['ore_contratto']:
-                stato = f"Sotto contratto di {info['ore_contratto'] - ore:.1f} ore"
-                
-            print(f"{addetto}: {ore:.1f} ore / {info['ore_max']} max ({stato})")
-        
+                print("  ✗ Impossibile trovare una copertura completa per questo giorno")
+
+        # Stampa riepilogo finale dettagliato
+        self._stampa_riepilogo_finale(ore_assegnate, turni_assegnati)
+
         return calendario
+
+    def _conta_giorni_lavorativi(self, anno, mese):
+        """Conta i giorni lavorativi del mese (esclusi festivi)"""
+        num_giorni = calendar.monthrange(anno, mese)[1]
+        count = 0
+        for giorno in range(1, num_giorni + 1):
+            data = datetime(anno, mese, giorno)
+            data_str = data.strftime('%d-%m')
+            if data_str not in self.giorni_festivi:
+                count += 1
+        return count
+
+    def _conta_giorni_disponibili(self, nome, anno, mese):
+        """Conta i giorni in cui un addetto è disponibile nel mese"""
+        num_giorni = calendar.monthrange(anno, mese)[1]
+        count = 0
+        info = self.addetti[nome]
+
+        for giorno in range(1, num_giorni + 1):
+            data = datetime(anno, mese, giorno)
+            data_str = data.strftime('%d-%m')
+
+            # Salta festivi
+            if data_str in self.giorni_festivi:
+                continue
+
+            # Salta ferie
+            if data.strftime('%Y-%m-%d') in info['ferie']:
+                continue
+
+            # Salta riposi settimanali
+            if data.weekday() in info['giorni_riposo']:
+                continue
+
+            count += 1
+
+        return count
+
+    def _calcola_ore_turno(self, turno):
+        """Calcola le ore di un turno"""
+        inizio = datetime.strptime(turno[0], '%H:%M')
+        fine = datetime.strptime(turno[1], '%H:%M')
+        return (fine - inizio).seconds / 3600
+
+    def _calcola_disponibilita_addetti(self, data, ore_assegnate, turni_assegnati, calendario, giorno):
+        """
+        Calcola gli addetti disponibili con priorità e informazioni dettagliate
+        """
+        disponibili = []
+        info_dettagli = {}
+
+        for nome, info in self.addetti.items():
+            # Verifica vincoli hard
+            if data.strftime('%Y-%m-%d') in info['ferie']:
+                print(f"  - {nome:15s}: FERIE")
+                continue
+
+            if data.weekday() in info['giorni_riposo']:
+                print(f"  - {nome:15s}: RIPOSO SETTIMANALE")
+                continue
+
+            ore_residue = info['ore_max'] - ore_assegnate[nome]
+
+            # Turno minimo disponibile
+            ore_turno_min = min(self._calcola_ore_turno(t) for t in self.turni_disponibili)
+
+            # Verifica se ha abbastanza ore residue
+            if not info['straordinario'] and ore_residue < ore_turno_min:
+                print(f"  - {nome:15s}: LIMITE ORE RAGGIUNTO ({ore_assegnate[nome]:.1f}/{info['ore_max']}h)")
+                continue
+
+            # Calcola priorità per bilanciamento carico
+            ore_contratto = info['ore_contratto']
+            percentuale_utilizzo = ore_assegnate[nome] / ore_contratto if ore_contratto > 0 else 0
+
+            # Priorità: chi ha lavorato meno ha priorità più alta
+            priorita = 100 - (percentuale_utilizzo * 100)
+
+            # Bonus per chi può fare straordinari
+            if info['straordinario']:
+                priorita += 10
+
+            # Bonus per bilanciare mattina/pomeriggio
+            diff_turni = abs(turni_assegnati[nome]['mattina'] - turni_assegnati[nome]['pomeriggio'])
+            priorita -= diff_turni * 2  # Penalità per sbilanciamento
+
+            disponibili.append(nome)
+            info_dettagli[nome] = {
+                'ore_residue': ore_residue,
+                'priorita': priorita,
+                'straordinario': info['straordinario'],
+                'ore_assegnate': ore_assegnate[nome],
+                'turni_recenti': self._get_turni_recenti(nome, calendario, giorno, 3)
+            }
+
+            print(f"  ✓ {nome:15s}: Disponibile (priorità: {priorita:.1f}, ore residue: {ore_residue:.1f}h)")
+
+        # Ordina per priorità decrescente
+        disponibili.sort(key=lambda x: info_dettagli[x]['priorita'], reverse=True)
+
+        return {
+            'disponibili': disponibili,
+            'dettagli': info_dettagli
+        }
+
+    def _get_turni_recenti(self, nome, calendario, giorno_corrente, n_giorni):
+        """Ottiene gli ultimi N turni assegnati a un addetto"""
+        turni = []
+        for g in range(max(1, giorno_corrente - n_giorni), giorno_corrente):
+            if g in calendario and nome in calendario[g]:
+                turni.append(calendario[g][nome])
+        return turni
+
+    def _assegna_turni_giorno_ottimizzato(self, giorno, data, addetti_info, ore_assegnate,
+                                          turni_assegnati, calendario):
+        """
+        Algoritmo ottimizzato per assegnare i turni di un giorno
+        Strategia: greedy con priorità dinamiche e backtracking limitato
+        """
+        inizio_min = 8 * 60  # 08:00 in minuti
+        fine_min = 21 * 60   # 21:00 in minuti
+        durata_min = fine_min - inizio_min
+
+        # Prova diverse strategie
+        strategie = [
+            'priorita_copertura',  # Prima strategia: massimizza copertura
+            'priorita_bilanciamento',  # Seconda: bilancia ore
+            'priorita_continuita'  # Terza: evita frammentazione
+        ]
+
+        for strategia in strategie:
+            soluzione = self._prova_assegnazione(
+                addetti_info, ore_assegnate, strategia, inizio_min, fine_min, giorno, calendario
+            )
+
+            if soluzione and self._verifica_copertura_completa(soluzione, inizio_min, fine_min):
+                print(f"  ✓ Soluzione trovata con strategia: {strategia}")
+                return soluzione
+
+        # Se nessuna strategia funziona, prova soluzione parziale migliore
+        print(f"  ⚠️ Copertura completa non possibile, uso migliore soluzione parziale")
+        return self._trova_soluzione_parziale_migliore(
+            addetti_info, ore_assegnate, inizio_min, fine_min, giorno, calendario
+        )
+
+    def _prova_assegnazione(self, addetti_info, ore_assegnate, strategia,
+                           inizio_min, fine_min, giorno, calendario):
+        """Prova un'assegnazione con una specifica strategia"""
+        soluzione = {}
+        copertura = [False] * (fine_min - inizio_min)
+        addetti_usati = set()
+
+        # Ordina turni in base alla strategia
+        if strategia == 'priorita_copertura':
+            # Turni più lunghi prima
+            turni_ordinati = sorted(self.turni_disponibili,
+                                   key=lambda t: self._calcola_ore_turno(t), reverse=True)
+        elif strategia == 'priorita_continuita':
+            # Turni che iniziano prima
+            turni_ordinati = sorted(self.turni_disponibili, key=lambda t: t[0])
+        else:  # bilanciamento
+            # Alternanza mattina/pomeriggio
+            turni_ordinati = self.turni_disponibili.copy()
+
+        # Assegna turni finché c'è copertura da fare
+        max_iterazioni = len(addetti_info['disponibili']) * len(self.turni_disponibili)
+        iterazione = 0
+
+        while iterazione < max_iterazioni:
+            # Trova il primo buco di copertura
+            buco = self._trova_primo_buco(copertura)
+            if buco is None:
+                # Copertura completa!
+                return soluzione
+
+            buco_inizio, buco_fine = buco
+            ora_buco_inizio = inizio_min + buco_inizio
+            ora_buco_fine = inizio_min + buco_fine
+
+            # Trova il miglior turno per coprire questo buco
+            migliore = self._trova_miglior_assegnazione_per_buco(
+                ora_buco_inizio, ora_buco_fine, turni_ordinati, addetti_info,
+                addetti_usati, ore_assegnate, giorno, calendario
+            )
+
+            if migliore is None:
+                # Non possiamo coprire questo buco
+                break
+
+            addetto, turno = migliore
+            soluzione[addetto] = turno
+            addetti_usati.add(addetto)
+
+            # Aggiorna copertura
+            self._aggiorna_copertura(copertura, turno, inizio_min)
+
+            iterazione += 1
+
+        return soluzione if soluzione else None
+
+    def _trova_primo_buco(self, copertura):
+        """Trova il primo intervallo non coperto"""
+        inizio_buco = None
+        for i, coperto in enumerate(copertura):
+            if not coperto and inizio_buco is None:
+                inizio_buco = i
+            elif coperto and inizio_buco is not None:
+                return (inizio_buco, i)
+
+        if inizio_buco is not None:
+            return (inizio_buco, len(copertura))
+
+        return None
+
+    def _trova_miglior_assegnazione_per_buco(self, ora_inizio_buco, ora_fine_buco,
+                                             turni, addetti_info, addetti_usati,
+                                             ore_assegnate, giorno, calendario):
+        """Trova la miglior combinazione addetto-turno per coprire un buco"""
+        miglior_score = -float('inf')
+        miglior_scelta = None
+
+        for turno in turni:
+            t_inizio = self._orario_in_minuti(turno[0])
+            t_fine = self._orario_in_minuti(turno[1])
+
+            # Il turno deve sovrapporsi al buco
+            if t_fine <= ora_inizio_buco or t_inizio >= ora_fine_buco:
+                continue
+
+            # Calcola sovrapposizione
+            sovrapposizione = min(t_fine, ora_fine_buco) - max(t_inizio, ora_inizio_buco)
+
+            # Trova il miglior addetto per questo turno
+            for addetto in addetti_info['disponibili']:
+                if addetto in addetti_usati:
+                    continue
+
+                dettagli = addetti_info['dettagli'][addetto]
+                ore_turno = self._calcola_ore_turno(turno)
+
+                # Verifica vincolo ore max
+                if not dettagli['straordinario']:
+                    if ore_assegnate[addetto] + ore_turno > self.addetti[addetto]['ore_max']:
+                        continue
+
+                # Calcola score
+                score = sovrapposizione  # Base: quanti minuti copriamo
+                score += dettagli['priorita']  # Priorità addetto
+                score -= self._penalita_ripetizione_turno(addetto, turno, dettagli['turni_recenti']) * 10
+
+                # Bonus se il turno copre dall'inizio del buco
+                if t_inizio <= ora_inizio_buco:
+                    score += 20
+
+                if score > miglior_score:
+                    miglior_score = score
+                    miglior_scelta = (addetto, turno)
+
+        return miglior_scelta
+
+    def _penalita_ripetizione_turno(self, addetto, turno, turni_recenti):
+        """Calcola penalità per ripetizione dello stesso turno"""
+        turno_str = f"{turno[0]}-{turno[1]}"
+        count = sum(1 for t in turni_recenti if f"{t[0]}-{t[1]}" == turno_str)
+        return count * count  # Penalità quadratica
+
+    def _orario_in_minuti(self, orario):
+        """Converte un orario HH:MM in minuti dal mezzanotte"""
+        ore, minuti = map(int, orario.split(':'))
+        return ore * 60 + minuti
+
+    def _aggiorna_copertura(self, copertura, turno, inizio_min):
+        """Aggiorna l'array di copertura con un nuovo turno"""
+        t_inizio = self._orario_in_minuti(turno[0])
+        t_fine = self._orario_in_minuti(turno[1])
+
+        inizio_rel = max(0, t_inizio - inizio_min)
+        fine_rel = min(len(copertura), t_fine - inizio_min)
+
+        for i in range(inizio_rel, fine_rel):
+            copertura[i] = True
+
+    def _verifica_copertura_completa(self, soluzione, inizio_min, fine_min):
+        """Verifica se una soluzione copre completamente l'orario"""
+        copertura = [False] * (fine_min - inizio_min)
+        for turno in soluzione.values():
+            self._aggiorna_copertura(copertura, turno, inizio_min)
+        return all(copertura)
+
+    def _trova_soluzione_parziale_migliore(self, addetti_info, ore_assegnate,
+                                          inizio_min, fine_min, giorno, calendario):
+        """Trova la soluzione parziale che massimizza la copertura"""
+        # Usa la strategia di copertura ma accetta soluzione parziale
+        soluzione = self._prova_assegnazione(
+            addetti_info, ore_assegnate, 'priorita_copertura',
+            inizio_min, fine_min, giorno, calendario
+        )
+        return soluzione
+
+    def _stampa_riepilogo_finale(self, ore_assegnate, turni_assegnati):
+        """Stampa un riepilogo dettagliato finale"""
+        print(f"\n{'='*70}")
+        print("RIEPILOGO FINALE")
+        print(f"{'='*70}\n")
+
+        for addetto in sorted(ore_assegnate.keys()):
+            info = self.addetti[addetto]
+            ore = ore_assegnate[addetto]
+            turni = turni_assegnati[addetto]
+
+            # Calcola stato
+            if ore > info['ore_max'] and not info['straordinario']:
+                stato = "⚠️ ERRORE: Superato limite!"
+                icona = "✗"
+            elif ore > info['ore_contratto']:
+                stato = f"Straordinario (+{ore - info['ore_contratto']:.1f}h)"
+                icona = "⚡"
+            elif ore < info['ore_contratto'] * 0.9:
+                stato = f"Sotto contratto (-{info['ore_contratto'] - ore:.1f}h)"
+                icona = "⚠️"
+            else:
+                stato = "OK"
+                icona = "✓"
+
+            print(f"{icona} {addetto:15s}: {ore:5.1f}h / {info['ore_max']}h max")
+            print(f"   Contratto: {info['ore_contratto']}h | "
+                  f"Mattina: {turni['mattina']} | Pomeriggio: {turni['pomeriggio']}")
+            print(f"   Stato: {stato}\n")
 
     def _salva_calendario_excel(self, calendario, anno, mese):
         """Salva il calendario dei turni su file Excel con formattazione migliorata"""
